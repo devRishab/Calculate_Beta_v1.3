@@ -128,7 +128,7 @@ def generate_market_excel(
         left=Side(style="thin", color="D5D8DC"), right=Side(style="thin", color="D5D8DC"),
         top=Side(style="thin", color="D5D8DC"), bottom=Side(style="thin", color="D5D8DC"),
     )
-    ALIGN_CENTER = Alignment(horizontal="center", vertical="center")
+    ALIGN_CENTER = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     all_symbols = list(data_dict.keys())
     ordered_sheets = [s for s in main_assets if s in all_symbols]
@@ -254,7 +254,6 @@ def generate_market_excel(
         for c_i in range(1, 12):
             ws_summary.cell(row=s_row, column=c_i).border = BORDER_THIN
 
-    # Native Excel Bar Chart
     chart = BarChart()
     chart.type = "col"
     chart.style = 10
@@ -274,35 +273,38 @@ def generate_market_excel(
     ws_summary.add_chart(chart, "M3")
 
     # ==========================================
-    # NEW: Industry Scenarios Sheet
+    # NEW: Industry Scenarios Sheet (UPDATED COLUMNS)
     # ==========================================
     ws_ind = wb.create_sheet(title="Industry Scenarios", index=1)
     ws_ind.views.sheetView[0].showGridLines = True
-    ws_ind.merge_cells("A1:G1")
+    ws_ind.merge_cells("A1:I1")
     ws_ind["A1"] = "INDUSTRY BETA SCENARIOS (RELEVERED BY TARGET)"
     ws_ind["A1"].font, ws_ind["A1"].fill = FONT_TITLE, NAVY_FILL
 
     headers_ind = [
-        "Target Asset", "Calc 1: Global Simple Unlevered", "Calc 1: Target Relevered", 
-        "Calc 2: Global Weighted Unlevered", "Calc 2: Target Relevered", 
-        "Calc 3: Peer Weighted Unlevered", "Calc 3: Target Relevered"
+        "Target Asset", "Market Cap", "Industry Weight (%)",
+        "Industry Average Unlevered Beta", "Target Relevered (Industry Avg)", 
+        "Industry Weighted Avg Unlevered Beta", "Target Relevered (Ind Weighted)", 
+        "Peer Weighted Avg Unlevered Beta", "Target Relevered (Peer Weighted)"
     ]
     for col_idx, text in enumerate(headers_ind, start=1):
         c = ws_ind.cell(row=3, column=col_idx, value=text)
         c.fill, c.font, c.alignment, c.border = HEADER_FILL, FONT_HEADER, ALIGN_CENTER, BORDER_THIN
-        ws_ind.column_dimensions[get_column_letter(col_idx)].width = 25
+        ws_ind.column_dimensions[get_column_letter(col_idx)].width = 20
 
     for idx, row in industry_df.iterrows():
         s_row = 4 + idx
         ws_ind.cell(row=s_row, column=1, value=row["Target Asset"]).font = FONT_BOLD
-        ws_ind.cell(row=s_row, column=2, value=row["Calc 1: Global Simple Unlevered"]).number_format = "0.00"
-        ws_ind.cell(row=s_row, column=3, value=row["Calc 1: Target Relevered"]).number_format = "0.00"
-        ws_ind.cell(row=s_row, column=4, value=row["Calc 2: Global Weighted Unlevered"]).number_format = "0.00"
-        ws_ind.cell(row=s_row, column=5, value=row["Calc 2: Target Relevered"]).number_format = "0.00"
-        ws_ind.cell(row=s_row, column=6, value=row["Calc 3: Peer Weighted Unlevered"]).number_format = "0.00"
-        ws_ind.cell(row=s_row, column=7, value=row["Calc 3: Target Relevered"]).number_format = "0.00"
+        ws_ind.cell(row=s_row, column=2, value=row["Market Cap"]).number_format = "#,##0"
+        ws_ind.cell(row=s_row, column=3, value=row["Industry Weight (%)"]).number_format = "0.00%"
+        ws_ind.cell(row=s_row, column=4, value=row["Industry Average Unlevered Beta"]).number_format = "0.00"
+        ws_ind.cell(row=s_row, column=5, value=row["Target Relevered (Industry Avg)"]).number_format = "0.00"
+        ws_ind.cell(row=s_row, column=6, value=row["Industry Weighted Avg Unlevered Beta"]).number_format = "0.00"
+        ws_ind.cell(row=s_row, column=7, value=row["Target Relevered (Ind Weighted)"]).number_format = "0.00"
+        ws_ind.cell(row=s_row, column=8, value=row["Peer Weighted Avg Unlevered Beta"]).number_format = "0.00"
+        ws_ind.cell(row=s_row, column=9, value=row["Target Relevered (Peer Weighted)"]).number_format = "0.00"
         
-        for c_i in range(1, 8):
+        for c_i in range(1, 10):
             ws_ind.cell(row=s_row, column=c_i).border = BORDER_THIN
 
     # ==========================================
@@ -424,7 +426,6 @@ if st.button("Run Financial Analysis", type="primary"):
             st.error(f"Could not fetch benchmark '{bench_symbol}'. Please verify the ticker.")
             st.stop()
 
-        # STRICT ALIGNMENT: Align trading days across all fetched assets
         common_dates = set(fetched_data[bench_symbol].index)
         for sym in fetched_data:
             common_dates = common_dates.intersection(set(fetched_data[sym].index))
@@ -464,11 +465,9 @@ if st.button("Run Financial Analysis", type="primary"):
 
         # --- CALCULATE 3 NEW INDUSTRY SCENARIOS ---
         valid_companies = [s for s in all_symbols_to_fetch if s in metrics_cache and s != bench_symbol]
+        total_mc = 0
         if valid_companies:
-            # Calc 1: Simple Average of all companies (Targets + Competitors)
             global_simple_u_beta = np.mean([metrics_cache[c]["beta_u"] for c in valid_companies])
-            
-            # Calc 2: Market Cap Weighted Average of all companies
             total_mc = sum(metrics_cache[c]["mc"] for c in valid_companies)
             if total_mc > 0:
                 global_mc_u_beta = sum(metrics_cache[c]["beta_u"] * metrics_cache[c]["mc"] for c in valid_companies) / total_mc
@@ -485,13 +484,11 @@ if st.button("Run Financial Analysis", type="primary"):
             m = metrics_cache[sym]
             de, tax = m["de"], m["tax"]
             
-            # Identify peers for Calc 3
             if sym in comp_map and comp_map[sym]:
                 peers = [p for p in comp_map[sym] if p in metrics_cache]
             else:
                 peers = [p for p in main_assets if p != sym and p in metrics_cache]
             
-            # Base Dashboard specific peer logic (Simple avg)
             peer_u_beta = np.mean([metrics_cache[p]["beta_u"] for p in peers]) if peers else np.nan
             peer_rel_beta = peer_u_beta * (1 + (1 - m["tax"]) * m["de"]) if not np.isnan(peer_u_beta) else np.nan
 
@@ -511,7 +508,6 @@ if st.button("Run Financial Analysis", type="primary"):
             c1_rel = global_simple_u_beta * (1 + (1 - tax) * de)
             c2_rel = global_mc_u_beta * (1 + (1 - tax) * de)
 
-            # Calc 3: Market Cap Weighted Average of *Target's Competitors*
             c3_unlev = np.nan
             c3_rel = np.nan
             if peers:
@@ -519,17 +515,20 @@ if st.button("Run Financial Analysis", type="primary"):
                 if peer_total_mc > 0:
                     c3_unlev = sum(metrics_cache[p]["beta_u"] * metrics_cache[p]["mc"] for p in peers) / peer_total_mc
                 else:
-                    c3_unlev = peer_u_beta # fallback to simple if no market cap
+                    c3_unlev = peer_u_beta 
                 c3_rel = c3_unlev * (1 + (1 - tax) * de)
 
+            # --- APPEND NEW COLUMNS TO MATCH EXCEL SHEET REQUEST ---
             industry_scenario_data.append({
                 "Target Asset": sym,
-                "Calc 1: Global Simple Unlevered": global_simple_u_beta,
-                "Calc 1: Target Relevered": c1_rel,
-                "Calc 2: Global Weighted Unlevered": global_mc_u_beta,
-                "Calc 2: Target Relevered": c2_rel,
-                "Calc 3: Peer Weighted Unlevered": c3_unlev,
-                "Calc 3: Target Relevered": c3_rel
+                "Market Cap": m["mc"],
+                "Industry Weight (%)": (m["mc"] / total_mc) if total_mc > 0 else 0.0,
+                "Industry Average Unlevered Beta": global_simple_u_beta,
+                "Target Relevered (Industry Avg)": c1_rel,
+                "Industry Weighted Avg Unlevered Beta": global_mc_u_beta,
+                "Target Relevered (Ind Weighted)": c2_rel,
+                "Peer Weighted Avg Unlevered Beta": c3_unlev,
+                "Target Relevered (Peer Weighted)": c3_rel
             })
 
     dash_df = pd.DataFrame(dashboard_data)
@@ -563,7 +562,6 @@ if 'ran_analysis' in st.session_state and st.session_state['ran_analysis']:
     if show_dash:
         st.divider()
         
-        # EXCELLENT UI USING TABS
         tab1, tab2, tab3 = st.tabs(["📊 Main Dashboard", "🌐 Industry Beta Scenarios", "📈 Charts & Regressions"])
         
         with tab1:
@@ -580,14 +578,25 @@ if 'ran_analysis' in st.session_state and st.session_state['ran_analysis']:
             
             c1, c2, c3 = st.columns(3)
             with c1:
-                st.info("**Calc 1:** Simple Average Unlevered Beta of ALL companies (Targets + Competitors).")
+                st.info("**Industry Average:** Simple Avg Unlevered Beta of ALL companies.")
             with c2:
-                st.info("**Calc 2:** Market Cap Weighted Average Unlevered Beta of ALL companies.")
+                st.info("**Industry Weighted Avg:** Market Cap Weighted Avg Unlevered Beta of ALL companies.")
             with c3:
-                st.info("**Calc 3:** Market Cap Weighted Average Unlevered Beta of the *Target's specific competitors* only.")
+                st.info("**Peer Weighted Avg:** Market Cap Weighted Avg Unlevered Beta of the *Target's specific competitors*.")
+
+            format_scenarios = {
+                "Market Cap": "{:,.0f}",
+                "Industry Weight (%)": "{:.2%}",
+                "Industry Average Unlevered Beta": "{:.3f}",
+                "Target Relevered (Industry Avg)": "{:.3f}",
+                "Industry Weighted Avg Unlevered Beta": "{:.3f}",
+                "Target Relevered (Ind Weighted)": "{:.3f}",
+                "Peer Weighted Avg Unlevered Beta": "{:.3f}",
+                "Target Relevered (Peer Weighted)": "{:.3f}"
+            }
 
             st.dataframe(
-                industry_df.style.format("{:.3f}", subset=industry_df.columns[1:]).background_gradient(cmap='YlGn', axis=None),
+                industry_df.style.format(format_scenarios).background_gradient(cmap='YlGn', axis=None),
                 use_container_width=True, hide_index=True
             )
 
