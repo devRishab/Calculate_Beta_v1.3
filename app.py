@@ -328,6 +328,33 @@ def generate_market_excel(
         for c_i in range(1, 5):
             ws_ind.cell(row=r_idx, column=c_i).border = BORDER_THIN
 
+    # Table 3: Summary of Unlevered Beta Calculations
+    t3_start_row = t2_start_row + len(weight_table_df) + 3
+    ws_ind.merge_cells(f"A{t3_start_row-1}:D{t3_start_row-1}")
+    ws_ind[f"A{t3_start_row-1}"] = "UNLEVERED BETA CALCULATIONS SUMMARY"
+    ws_ind[f"A{t3_start_row-1}"].font, ws_ind[f"A{t3_start_row-1}"].fill = FONT_TITLE, NAVY_FILL
+
+    headers_unlevered = [
+        "Target Asset", 
+        "Peer Weighted Unlevered Beta", 
+        "Global Weighted Unlevered Beta", 
+        "Global Simple Unlevered Beta"
+    ]
+    
+    for col_idx, text in enumerate(headers_unlevered, start=1):
+        c = ws_ind.cell(row=t3_start_row, column=col_idx, value=text)
+        c.fill, c.font, c.alignment, c.border = HEADER_FILL, FONT_HEADER, ALIGN_CENTER, BORDER_THIN
+        ws_ind.column_dimensions[get_column_letter(col_idx)].width = 30
+
+    for idx, row in industry_df.iterrows():
+        r_idx = t3_start_row + 1 + idx
+        ws_ind.cell(row=r_idx, column=1, value=row["Target Asset"]).font = FONT_BOLD
+        ws_ind.cell(row=r_idx, column=2, value=row["Calc 3: Peer Weighted Unlevered"]).number_format = "0.00"
+        ws_ind.cell(row=r_idx, column=3, value=row["Calc 2: Global Weighted Unlevered"]).number_format = "0.00"
+        ws_ind.cell(row=r_idx, column=4, value=row["Calc 1: Global Simple Unlevered"]).number_format = "0.00"
+        for c_i in range(1, 5):
+            ws_ind.cell(row=r_idx, column=c_i).border = BORDER_THIN
+
     # ==========================================
     # Correlation Heatmap Sheet
     # ==========================================
@@ -670,31 +697,29 @@ if 'ran_analysis' in st.session_state and st.session_state['ran_analysis']:
                     target_ret = fetched_data[sym]['Close'].pct_change().fillna(0.0)
                     b_ret = fetched_data[bench_symbol]['Close'].pct_change().fillna(0.0)
                     
-                    aligned = pd.concat([target_ret, b_ret], axis=1)
-                    aligned.columns = [sym, bench_symbol]
+                    # Ensure dimensions match before plotting
+                    temp_df = pd.DataFrame({'Bench': b_ret, 'Target': target_ret}).dropna()
                     
-                    m, c_y = np.polyfit(aligned[bench_symbol], aligned[sym], 1)
-                    
-                    fig_scat = px.scatter(aligned, x=bench_symbol, y=sym, opacity=0.6, title=f"{sym} Regression")
-                    fig_scat.add_trace(go.Scatter(
-                        x=aligned[bench_symbol], y=m*aligned[bench_symbol] + c_y, 
-                        mode='lines', name='OLS Trendline', line=dict(color='red')
-                    ))
-                    fig_scat.update_layout(xaxis_title=f"{bench_symbol} Daily Return", yaxis_title=f"{sym} Daily Return")
-                    scatter_cols[idx % 2].plotly_chart(fig_scat, use_container_width=True)
+                    fig = px.scatter(temp_df, x='Bench', y='Target', trendline="ols",
+                                     labels={'Bench': f'{bench_symbol} Returns', 'Target': f'{sym} Returns'},
+                                     title=f"{sym} vs {bench_symbol}")
+                    scatter_cols[idx % 2].plotly_chart(fig, use_container_width=True)
                     idx += 1
 
     if show_excel:
         st.divider()
-        st.subheader("📥 Excel Export with Native Charts")
-        excel_bytes = generate_market_excel(
+        st.subheader("📥 Export Financial Models")
+        
+        # Call generation function
+        excel_data = generate_market_excel(
             fetched_data, financials_data, main_assets, comp_map, bench_symbol,
             yf_start, yf_end, dash_df, industry_df, weight_table_df
         )
+        
         st.download_button(
-            label="Download Complete Analytical Workbook (.xlsx)",
-            data=excel_bytes,
-            file_name=f"Financial_Model_{yf_start}_to_{yf_end}.xlsx",
+            label="Download Excel Workbook",
+            data=excel_data,
+            file_name=f"Beta_Analytics_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
