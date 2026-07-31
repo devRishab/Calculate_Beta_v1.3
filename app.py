@@ -111,7 +111,8 @@ def generate_market_excel(
     end_date: str,
     dash_df: pd.DataFrame,
     industry_df: pd.DataFrame,
-    weight_table_df: pd.DataFrame
+    weight_table_df: pd.DataFrame,
+    calc_breakdown_df: pd.DataFrame
 ) -> bytes:
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
@@ -275,7 +276,7 @@ def generate_market_excel(
     ws_summary.add_chart(chart, "M3")
 
     # ==========================================
-    # NEW: Industry Scenarios Sheet
+    # Industry Scenarios Sheet
     # ==========================================
     ws_ind = wb.create_sheet(title="Industry Scenarios", index=1)
     ws_ind.views.sheetView[0].showGridLines = True
@@ -328,30 +329,23 @@ def generate_market_excel(
         for c_i in range(1, 5):
             ws_ind.cell(row=r_idx, column=c_i).border = BORDER_THIN
 
-    # Table 3: Summary of Unlevered Beta Calculations
+    # Table 3: Detailed Calculation Breakdown for Unlevered Betas (NEW)
     t3_start_row = t2_start_row + len(weight_table_df) + 3
     ws_ind.merge_cells(f"A{t3_start_row-1}:D{t3_start_row-1}")
-    ws_ind[f"A{t3_start_row-1}"] = "UNLEVERED BETA CALCULATIONS SUMMARY"
+    ws_ind[f"A{t3_start_row-1}"] = "DETAILED UNLEVERED BETA CALCULATION BREAKDOWN"
     ws_ind[f"A{t3_start_row-1}"].font, ws_ind[f"A{t3_start_row-1}"].fill = FONT_TITLE, NAVY_FILL
 
-    headers_unlevered = [
-        "Target Asset", 
-        "Peer Weighted Unlevered Beta", 
-        "Global Weighted Unlevered Beta", 
-        "Global Simple Unlevered Beta"
-    ]
-    
-    for col_idx, text in enumerate(headers_unlevered, start=1):
+    headers_calc = ["Calculation Type", "Target Asset", "Formula / Included Entities", "Resulting Unlevered Beta"]
+    for col_idx, text in enumerate(headers_calc, start=1):
         c = ws_ind.cell(row=t3_start_row, column=col_idx, value=text)
         c.fill, c.font, c.alignment, c.border = HEADER_FILL, FONT_HEADER, ALIGN_CENTER, BORDER_THIN
-        ws_ind.column_dimensions[get_column_letter(col_idx)].width = 30
 
-    for idx, row in industry_df.iterrows():
+    for idx, row in calc_breakdown_df.iterrows():
         r_idx = t3_start_row + 1 + idx
-        ws_ind.cell(row=r_idx, column=1, value=row["Target Asset"]).font = FONT_BOLD
-        ws_ind.cell(row=r_idx, column=2, value=row["Calc 3: Peer Weighted Unlevered"]).number_format = "0.00"
-        ws_ind.cell(row=r_idx, column=3, value=row["Calc 2: Global Weighted Unlevered"]).number_format = "0.00"
-        ws_ind.cell(row=r_idx, column=4, value=row["Calc 1: Global Simple Unlevered"]).number_format = "0.00"
+        ws_ind.cell(row=r_idx, column=1, value=row["Calculation Type"]).font = FONT_BOLD
+        ws_ind.cell(row=r_idx, column=2, value=row["Target Asset"])
+        ws_ind.cell(row=r_idx, column=3, value=row["Formula / Included Entities"])
+        ws_ind.cell(row=r_idx, column=4, value=row["Resulting Unlevered Beta"]).number_format = "0.00"
         for c_i in range(1, 5):
             ws_ind.cell(row=r_idx, column=c_i).border = BORDER_THIN
 
@@ -540,6 +534,7 @@ if st.button("Run Financial Analysis", type="primary"):
 
         industry_scenario_data = []
         dashboard_data = []
+        calc_breakdown_data = []
 
         for sym in main_assets:
             if sym not in metrics_cache: continue
@@ -593,12 +588,34 @@ if st.button("Run Financial Analysis", type="primary"):
                 "Calc 3: Target Relevered": c3_rel
             })
 
+            # Populate Table 3 Breakdown Rows
+            calc_breakdown_data.append({
+                "Calculation Type": "1) Global Simple Unlevered Beta",
+                "Target Asset": sym,
+                "Formula / Included Entities": f"Simple Mean of All Companies ({', '.join(valid_companies)})",
+                "Resulting Unlevered Beta": global_simple_u_beta
+            })
+            calc_breakdown_data.append({
+                "Calculation Type": "2) Global Weighted Unlevered Beta",
+                "Target Asset": sym,
+                "Formula / Included Entities": f"Market Cap Weighted Average of All Companies ({', '.join(valid_companies)})",
+                "Resulting Unlevered Beta": global_mc_u_beta
+            })
+            calc_breakdown_data.append({
+                "Calculation Type": "3) Peer Weighted Unlevered Beta",
+                "Target Asset": sym,
+                "Formula / Included Entities": f"Market Cap Weighted Average of Target Peers ({', '.join(peers) if peers else 'None'})",
+                "Resulting Unlevered Beta": c3_unlev if not np.isnan(c3_unlev) else 0.0
+            })
+
     dash_df = pd.DataFrame(dashboard_data)
     industry_df = pd.DataFrame(industry_scenario_data)
+    calc_breakdown_df = pd.DataFrame(calc_breakdown_data)
 
     st.session_state['dash_df'] = dash_df
     st.session_state['industry_df'] = industry_df
     st.session_state['weight_table_df'] = weight_table_df
+    st.session_state['calc_breakdown_df'] = calc_breakdown_df
     st.session_state['fetched_data'] = fetched_data
     st.session_state['financials_data'] = financials_data
     st.session_state['main_assets'] = main_assets
@@ -612,6 +629,7 @@ if 'ran_analysis' in st.session_state and st.session_state['ran_analysis']:
     dash_df = st.session_state['dash_df']
     industry_df = st.session_state['industry_df']
     weight_table_df = st.session_state['weight_table_df']
+    calc_breakdown_df = st.session_state['calc_breakdown_df']
     fetched_data = st.session_state['fetched_data']
     financials_data = st.session_state['financials_data']
     main_assets = st.session_state['main_assets']
@@ -626,7 +644,6 @@ if 'ran_analysis' in st.session_state and st.session_state['ran_analysis']:
     if show_dash:
         st.divider()
         
-        # EXCELLENT UI USING TABS
         tab1, tab2, tab3 = st.tabs(["📊 Main Dashboard", "🌐 Industry Beta Scenarios", "📈 Charts & Regressions"])
         
         with tab1:
@@ -666,6 +683,13 @@ if 'ran_analysis' in st.session_state and st.session_state['ran_analysis']:
                 use_container_width=True, hide_index=True
             )
 
+            st.markdown("---")
+            st.subheader("Detailed Unlevered Beta Calculation Breakdown")
+            st.dataframe(
+                calc_breakdown_df.style.format("{:.3f}", subset=["Resulting Unlevered Beta"]),
+                use_container_width=True, hide_index=True
+            )
+
         with tab3:
             c1, c2 = st.columns(2)
             with c1:
@@ -697,29 +721,31 @@ if 'ran_analysis' in st.session_state and st.session_state['ran_analysis']:
                     target_ret = fetched_data[sym]['Close'].pct_change().fillna(0.0)
                     b_ret = fetched_data[bench_symbol]['Close'].pct_change().fillna(0.0)
                     
-                    # Ensure dimensions match before plotting
-                    temp_df = pd.DataFrame({'Bench': b_ret, 'Target': target_ret}).dropna()
+                    aligned = pd.concat([target_ret, b_ret], axis=1)
+                    aligned.columns = [sym, bench_symbol]
                     
-                    fig = px.scatter(temp_df, x='Bench', y='Target', trendline="ols",
-                                     labels={'Bench': f'{bench_symbol} Returns', 'Target': f'{sym} Returns'},
-                                     title=f"{sym} vs {bench_symbol}")
-                    scatter_cols[idx % 2].plotly_chart(fig, use_container_width=True)
+                    m, c_y = np.polyfit(aligned[bench_symbol], aligned[sym], 1)
+                    
+                    fig_scat = px.scatter(aligned, x=bench_symbol, y=sym, opacity=0.6, title=f"{sym} Regression")
+                    fig_scat.add_trace(go.Scatter(
+                        x=aligned[bench_symbol], y=m*aligned[bench_symbol] + c_y, 
+                        mode='lines', name='OLS Trendline', line=dict(color='red')
+                    ))
+                    fig_scat.update_layout(xaxis_title=f"{bench_symbol} Daily Return", yaxis_title=f"{sym} Daily Return")
+                    scatter_cols[idx % 2].plotly_chart(fig_scat, use_container_width=True)
                     idx += 1
 
     if show_excel:
         st.divider()
-        st.subheader("📥 Export Financial Models")
-        
-        # Call generation function
-        excel_data = generate_market_excel(
+        st.subheader("📥 Excel Export with Native Charts")
+        excel_bytes = generate_market_excel(
             fetched_data, financials_data, main_assets, comp_map, bench_symbol,
-            yf_start, yf_end, dash_df, industry_df, weight_table_df
+            yf_start, yf_end, dash_df, industry_df, weight_table_df, calc_breakdown_df
         )
-        
         st.download_button(
-            label="Download Excel Workbook",
-            data=excel_data,
-            file_name=f"Beta_Analytics_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            label="Download Complete Analytical Workbook (.xlsx)",
+            data=excel_bytes,
+            file_name=f"Financial_Model_{yf_start}_to_{yf_end}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary"
         )
